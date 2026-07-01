@@ -1,0 +1,14 @@
+node_modules/
+frontend/node_modules/
+backend/node_modules/
+
+frontend/dist/
+
+backend/delivery_tracker.db
+*.db
+*.sqlite
+*.sqlite3
+
+.env
+.env.*
+.vercel/

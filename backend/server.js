@@ -15,6 +15,18 @@ app.use(express.json());
 // Public route for login
 app.post('/api/login', loginHandler);
 
+// Public deploy check so we can verify Vercel is serving the expected code.
+app.get('/api/deploy-info', (req, res) => {
+  res.json({
+    app: 'delivery-tracker-backend',
+    version: 'postgres-trip-report-fix-2026-07-01',
+    fixes: {
+      managerTripsUsesJsOrderCounts: true,
+      postgresGroupByDeliverymanNameFixed: true
+    }
+  });
+});
+
 // Optional cron endpoint for serverless deployments.
 // Set CRON_SECRET and call with Authorization: Bearer <secret>.
 app.get('/api/assignment/cron', async (req, res) => {
