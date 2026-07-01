@@ -1,17 +1,7 @@
-import sqlite3 from 'sqlite3';
 import bcrypt from 'bcrypt';
-import { open } from 'sqlite';
 import pg from 'pg';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
 const { Pool } = pg;
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const DB_PATH = path.join(__dirname, 'delivery_tracker.db');
 const DATABASE_URL = process.env.DATABASE_URL || '';
-const USE_POSTGRES = Boolean(DATABASE_URL);
 
 let dbInstance = null;
 
@@ -110,34 +100,22 @@ function createPostgresDb() {
 export async function getDb() {
   if (dbInstance) return dbInstance;
 
-  if (USE_POSTGRES) {
-    dbInstance = createPostgresDb();
-    return dbInstance;
+  if (!DATABASE_URL) {
+    throw new Error('DATABASE_URL environment variable is required. Use your Supabase Postgres connection string.');
   }
 
-  dbInstance = await open({
-    filename: DB_PATH,
-    driver: sqlite3.Database
-  });
-
-  dbInstance.dialect = 'sqlite';
-  await dbInstance.run('PRAGMA foreign_keys = ON;');
+  dbInstance = createPostgresDb();
   return dbInstance;
 }
 
 async function columnExists(db, tableName, columnName) {
-  if (db.dialect === 'postgres') {
-    const row = await db.get(
-      `SELECT column_name
-       FROM information_schema.columns
-       WHERE table_schema = 'public' AND table_name = ? AND column_name = ?`,
-      [tableName, columnName]
-    );
-    return Boolean(row);
-  }
-
-  const columns = await db.all(`PRAGMA table_info(${tableName})`);
-  return columns.some(c => c.name === columnName);
+  const row = await db.get(
+    `SELECT column_name
+     FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = ? AND column_name = ?`,
+    [tableName, columnName]
+  );
+  return Boolean(row);
 }
 
 async function initSqliteSchema(db) {
@@ -377,12 +355,7 @@ async function initPostgresSchema(db) {
 
 export async function initDb() {
   const db = await getDb();
-
-  if (db.dialect === 'postgres') {
-    await initPostgresSchema(db);
-  } else {
-    await initSqliteSchema(db);
-  }
+  await initPostgresSchema(db);
 
   const dmCount = await db.get('SELECT COUNT(*) as count FROM deliverymen');
   if (parseInt(dmCount.count, 10) === 0) {

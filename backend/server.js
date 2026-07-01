@@ -7,12 +7,32 @@ import bcrypt from 'bcrypt';
 import XLSX from 'xlsx';
 const app = express();
 const PORT = process.env.PORT || 5000;
+const IS_VERCEL = Boolean(process.env.VERCEL);
 
 app.use(cors());
 app.use(express.json());
 
 // Public route for login
 app.post('/api/login', loginHandler);
+
+// Optional cron endpoint for serverless deployments.
+// Set CRON_SECRET and call with Authorization: Bearer <secret>.
+app.get('/api/assignment/cron', async (req, res) => {
+  const expectedSecret = process.env.CRON_SECRET;
+  const authHeader = req.headers.authorization || '';
+  const providedSecret = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : req.query.secret;
+
+  if (!expectedSecret || providedSecret !== expectedSecret) {
+    return res.status(403).json({ error: 'Forbidden.' });
+  }
+
+  try {
+    const logs = await runAssignmentEngine();
+    res.json({ logs });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // Protect all subsequent routes
 app.use('/api', authMiddleware); // apply JWT auth to all /api routes after login
@@ -38,6 +58,22 @@ app.post('/api/change-password', async (req, res) => {
   }
 });
 
+// Vercel/serverless functions do not keep setInterval alive reliably.
+// Running the engine before the deliverymen polling response preserves
+// assignment behavior while users are active in the app.
+app.use('/api', async (req, res, next) => {
+  if (!IS_VERCEL || req.method !== 'GET' || req.path !== '/deliverymen') {
+    return next();
+  }
+
+  try {
+    await runAssignmentEngine();
+  } catch (err) {
+    console.error('[Request-Triggered Assignment] Error:', err);
+  }
+  next();
+});
+
 // Initialize database on startup
 try {
   await initDb();
@@ -46,17 +82,20 @@ try {
   console.error('Database initialization failed:', error);
 }
 
-// Background assignment engine: run every 60 seconds
-setInterval(async () => {
-  try {
-    const logs = await runAssignmentEngine();
-    if (logs.some(log => log.includes('Successfully') || log.includes('Warning'))) {
-      console.log(`[Auto-Assignment Cron] Run at ${new Date().toISOString()}:\n`, logs.join('\n'));
+// Background assignment engine: run every 60 seconds on long-running servers.
+// On Vercel, use request-triggered assignment above and optional Vercel Cron.
+if (!IS_VERCEL) {
+  setInterval(async () => {
+    try {
+      const logs = await runAssignmentEngine();
+      if (logs.some(log => log.includes('Successfully') || log.includes('Warning'))) {
+        console.log(`[Auto-Assignment Cron] Run at ${new Date().toISOString()}:\n`, logs.join('\n'));
+      }
+    } catch (err) {
+      console.error('[Auto-Assignment Cron] Error:', err);
     }
-  } catch (err) {
-    console.error('[Auto-Assignment Cron] Error:', err);
-  }
-}, 60000);
+  }, 60000);
+}
 
 // Helper function to extract and validate query filters (Today, Date range, Deliveryman, Direction)
 function getManagerFilters(req) {
@@ -1100,7 +1139,11 @@ app.post('/api/reset-database', requireRole('manager'), async (req, res) => {
   }
 });
 
-// Start Express Server
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+// Start Express Server locally / on long-running hosts. Vercel imports the app.
+if (!IS_VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+}
+
+export default app;
