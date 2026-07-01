@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 export default function SettingsScreen({ addToast, refreshData }) {
   const [directions, setDirections] = useState(['1', '3', '6', '10']);
   const [maxOrders, setMaxOrders] = useState(3);
-  const [maxWait, setMaxWait] = useState(10);
+  const [maxWait, setMaxWait] = useState(13);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {

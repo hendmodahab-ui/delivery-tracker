@@ -12,6 +12,9 @@ export default function StaffDashboard({
   const [direction, setDirection] = useState('');
   const [hasBranchStop, setHasBranchStop] = useState(false);
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
+  const [draggedOrderId, setDraggedOrderId] = useState(null);
+  const [draggedQueueId, setDraggedQueueId] = useState(null);
+  const [extraOrderInputs, setExtraOrderInputs] = useState({});
 
   // Complaints form state
   const [showComplaintModal, setShowComplaintModal] = useState(false);
@@ -156,7 +159,7 @@ export default function StaffDashboard({
   };
 
   const getUrgencyClass = (totalSeconds) => {
-    const limitMinutes = settings?.max_waiting_minutes || 10;
+    const limitMinutes = settings?.max_waiting_minutes || 13;
     const limitSec = limitMinutes * 60;
     const warningSec = (limitMinutes - 2) * 60; // 8 minutes if limit is 10
 
@@ -174,12 +177,92 @@ export default function StaffDashboard({
       .sort((a, b) => new Date(a.ready_since || 0) - new Date(b.ready_since || 0))
       .map(({ id, name, status, ready_since }) => ({ id, name, status, ready_since }));
 
+  const moveWaitingOrderToDirection = async (orderId, nextDirection) => {
+    const order = waitingOrders.find(o => o.id === orderId);
+    if (!order || order.direction === nextDirection) return;
+
+    try {
+      const res = await authFetch(`/api/orders/${orderId}/direction`, {
+        method: 'PATCH',
+        body: JSON.stringify({ direction: nextDirection })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to update order direction.');
+      }
+      addToast(`Order ${order.serial_number} moved to Direction ${nextDirection}.`, 'success');
+      refreshData();
+    } catch (err) {
+      addToast(err.message, 'error');
+    } finally {
+      setDraggedOrderId(null);
+    }
+  };
+
+  const reorderDeliveryQueue = async (orderedIds) => {
+    try {
+      const res = await authFetch('/api/deliverymen/queue/reorder', {
+        method: 'POST',
+        body: JSON.stringify({ ordered_ids: orderedIds })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to update deliveryman queue.');
+      }
+      addToast('Deliveryman queue updated.', 'success');
+      refreshData();
+    } catch (err) {
+      addToast(err.message, 'error');
+    } finally {
+      setDraggedQueueId(null);
+    }
+  };
+
+  const moveQueueItem = (fromIndex, toIndex) => {
+    if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex || toIndex >= fullDeliveryQueue.length) return;
+    const nextQueue = [...fullDeliveryQueue];
+    const [moved] = nextQueue.splice(fromIndex, 1);
+    nextQueue.splice(toIndex, 0, moved);
+    reorderDeliveryQueue(nextQueue.map(dm => dm.id));
+  };
+
+  const addExtraOrdersToTrip = async (tripId) => {
+    const rawValue = extraOrderInputs[tripId] || '';
+    const serialNumbers = rawValue
+      .split(/[\n,]+/)
+      .map(value => value.trim())
+      .filter(Boolean);
+
+    if (serialNumbers.length === 0) {
+      addToast('Enter at least one extra order number.', 'error');
+      return;
+    }
+
+    try {
+      const res = await authFetch(`/api/trips/${tripId}/orders`, {
+        method: 'POST',
+        body: JSON.stringify({ serial_numbers: serialNumbers })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to add extra orders.');
+      }
+
+      const skipped = data.skipped_serials?.length ? ` Skipped: ${data.skipped_serials.join(', ')}` : '';
+      addToast(`Added ${data.added_orders?.length || 0} extra orders to trip.${skipped}`, 'success');
+      setExtraOrderInputs(prev => ({ ...prev, [tripId]: '' }));
+      refreshData();
+    } catch (err) {
+      addToast(err.message, 'error');
+    }
+  };
+
   // Check if any order is close to or over wait limits but no deliveryman is available
   const hasWaitingOrdersReady = Object.values(ordersByDirection).some(dirOrders => {
     if (dirOrders.length >= (settings?.max_orders_per_trip || 3)) return true;
     if (dirOrders.length > 0) {
       const oldestSec = getWaitSeconds(dirOrders[0].entered_at);
-      if (oldestSec >= (settings?.max_waiting_minutes || 10) * 60) return true;
+      if (oldestSec >= (settings?.max_waiting_minutes || 13) * 60) return true;
     }
     return false;
   });
@@ -262,7 +345,14 @@ export default function StaffDashboard({
               {dirsList.map(dir => {
                 const dirOrders = ordersByDirection[dir] || [];
                 return (
-                  <div key={dir} className="direction-column">
+                  <div
+                    key={dir}
+                    className={`direction-column ${draggedOrderId ? 'direction-drop-target' : ''}`}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={() => {
+                      if (draggedOrderId) moveWaitingOrderToDirection(draggedOrderId, dir);
+                    }}
+                  >
                     <div className="direction-header">
                       <span>Direction {dir}</span>
                       <span className="direction-count">{dirOrders.length} wait</span>
@@ -278,13 +368,31 @@ export default function StaffDashboard({
                           const waitSec = getWaitSeconds(o.entered_at);
                           const urgency = getUrgencyClass(waitSec);
                           return (
-                            <div key={o.id} className={`order-item-card order-${urgency}`}>
+                            <div
+                              key={o.id}
+                              className={`order-item-card order-${urgency}`}
+                              draggable
+                              onDragStart={() => setDraggedOrderId(o.id)}
+                              onDragEnd={() => setDraggedOrderId(null)}
+                            >
                               <div className="order-meta">
                                 <span className="serial-text">{o.serial_number}</span>
                                 <span className={`timer-text ${urgency}`}>
                                   ⏱ {formatWaitTime(waitSec)}
                                 </span>
                               </div>
+                              <select
+                                className="compact-select"
+                                value={o.direction}
+                                onChange={(e) => moveWaitingOrderToDirection(o.id, e.target.value)}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {dirsList.map(directionOption => (
+                                  <option key={directionOption} value={directionOption}>
+                                    Direction {directionOption}
+                                  </option>
+                                ))}
+                              </select>
                               {o.has_branch_stop === 1 && (
                                 <span className="branch-stop-badge">Stop other branch</span>
                               )}
@@ -312,10 +420,41 @@ export default function StaffDashboard({
             ) : (
               <div className="staff-queue-list">
                 {fullDeliveryQueue.map((dm, index) => (
-                  <div key={dm.id} className={`staff-queue-row ${index === 0 ? 'current-turn' : ''}`}>
+                  <div
+                    key={dm.id}
+                    className={`staff-queue-row ${index === 0 ? 'current-turn' : ''}`}
+                    draggable
+                    onDragStart={() => setDraggedQueueId(dm.id)}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={() => {
+                      const fromIndex = fullDeliveryQueue.findIndex(item => item.id === draggedQueueId);
+                      moveQueueItem(fromIndex, index);
+                    }}
+                    onDragEnd={() => setDraggedQueueId(null)}
+                  >
                     <span className="queue-position-badge">{index + 1}</span>
                     <span className="queue-name">{dm.name}</span>
-                    {index === 0 && <span className="badge badge-available">Current turn</span>}
+                    <span className="queue-actions">
+                      {index === 0 && <span className="badge badge-available">Current turn</span>}
+                      <button
+                        type="button"
+                        className="queue-icon-btn"
+                        onClick={() => moveQueueItem(index, index - 1)}
+                        disabled={index === 0}
+                        title="Move up"
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        className="queue-icon-btn"
+                        onClick={() => moveQueueItem(index, index + 1)}
+                        disabled={index === fullDeliveryQueue.length - 1}
+                        title="Move down"
+                      >
+                        ↓
+                      </button>
+                    </span>
                   </div>
                 ))}
               </div>
@@ -355,6 +494,22 @@ export default function StaffDashboard({
                         ⚠ Contains stop at another branch
                       </div>
                     )}
+
+                    <div className="extra-orders-control">
+                      <input
+                        type="text"
+                        value={extraOrderInputs[dm.current_trip_id] || ''}
+                        onChange={(e) => setExtraOrderInputs(prev => ({ ...prev, [dm.current_trip_id]: e.target.value }))}
+                        placeholder="Extra serials, comma separated"
+                      />
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => addExtraOrdersToTrip(dm.current_trip_id)}
+                      >
+                        Add
+                      </button>
+                    </div>
 
                     <button
                       onClick={() => handleMarkOut(dm.current_trip_id, dm.name)}

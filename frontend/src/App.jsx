@@ -28,6 +28,8 @@ export default function App() {
   const prevDeliverymenRef = useRef([]);
   const lastDriverPendingTurnRef = useRef('');
   const lastDriverAssignedTripRef = useRef('');
+  const alarmAudioContextRef = useRef(null);
+  const alarmStopRef = useRef(null);
 
   const isArabicText = (message) => /[\u0600-\u06FF]/.test(message || '');
 
@@ -61,6 +63,104 @@ export default function App() {
 
   const removeToast = (id) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
+  };
+
+  const requestAlarmPermission = () => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
+  };
+
+  const urlBase64ToUint8Array = (base64String) => {
+    const padding = '='.repeat((4 - base64String.length % 4) % 4);
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const rawData = window.atob(base64);
+    return Uint8Array.from([...rawData].map(char => char.charCodeAt(0)));
+  };
+
+  const registerDeliverymanPush = async () => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+      return;
+    }
+
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') return;
+
+    try {
+      const keyRes = await authFetch('/api/push/public-key');
+      if (!keyRes.ok) return;
+      const { publicKey } = await keyRes.json();
+      if (!publicKey) return;
+
+      const registration = await navigator.serviceWorker.register('/sw.js');
+      const existingSubscription = await registration.pushManager.getSubscription();
+      const subscription = existingSubscription || await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey)
+      });
+
+      await authFetch('/api/push/subscribe', {
+        method: 'POST',
+        body: JSON.stringify({ subscription })
+      });
+    } catch (err) {
+      console.warn('Push subscription could not be registered:', err);
+    }
+  };
+
+  const playDeliverymanAlarm = () => {
+    try {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) return;
+      const audioContext = alarmAudioContextRef.current || new AudioContextClass();
+      alarmAudioContextRef.current = audioContext;
+      audioContext.resume?.();
+
+      if (alarmStopRef.current) {
+        alarmStopRef.current();
+      }
+
+      let stopped = false;
+      const beep = () => {
+        if (stopped) return;
+        const oscillator = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        oscillator.type = 'square';
+        oscillator.frequency.value = 880;
+        gain.gain.setValueAtTime(0.0001, audioContext.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.22, audioContext.currentTime + 0.03);
+        gain.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 0.45);
+        oscillator.connect(gain);
+        gain.connect(audioContext.destination);
+        oscillator.start();
+        oscillator.stop(audioContext.currentTime + 0.5);
+      };
+
+      beep();
+      const intervalId = setInterval(beep, 900);
+      const timeoutId = setTimeout(() => {
+        stopped = true;
+        clearInterval(intervalId);
+      }, 10000);
+
+      alarmStopRef.current = () => {
+        stopped = true;
+        clearInterval(intervalId);
+        clearTimeout(timeoutId);
+      };
+    } catch (err) {
+      console.warn('Deliveryman alarm could not play:', err);
+    }
+  };
+
+  const notifyDeliverymanAlarm = (message) => {
+    playDeliverymanAlarm();
+    if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification('تنبيه المندوب', {
+        body: message,
+        silent: false
+      });
+    }
   };
 
   const fetchGlobalData = async (isFirstLoad = false) => {
@@ -107,6 +207,9 @@ export default function App() {
             'info'
           );
         }
+        if (pendingTurnKey && pendingTurnKey !== lastDriverPendingTurnRef.current) {
+          notifyDeliverymanAlarm(`\u062d\u0627\u0646 \u062f\u0648\u0631\u0643\u060c \u0644\u062f\u064a\u0643 ${driver.pending_direction_order_count} \u0637\u0644\u0628\u0627\u062a \u0645\u0639\u0644\u0642\u0629 \u0641\u064a \u0627\u062a\u062c\u0627\u0647 ${driver.pending_direction}.`);
+        }
         lastDriverPendingTurnRef.current = pendingTurnKey;
 
         const assignedTripKey = driver?.status === 'assigned' && driver.current_trip_id
@@ -119,6 +222,10 @@ export default function App() {
             `تم تعيين الطلبات لك، برجاء استلامها من الفرع. الطلبات: ${orderSerials} - اتجاه ${driver.current_direction}.`,
             'success'
           );
+        }
+        if (assignedTripKey && assignedTripKey !== lastDriverAssignedTripRef.current) {
+          const orderSerials = driver.current_orders ? driver.current_orders.map(o => o.serial_number).join(', ') : '';
+          notifyDeliverymanAlarm(`\u062a\u0645 \u062a\u0639\u064a\u064a\u0646 \u0627\u0644\u0637\u0644\u0628\u0627\u062a \u0644\u0643\u060c \u0628\u0631\u062c\u0627\u0621 \u0627\u0633\u062a\u0644\u0627\u0645\u0647\u0627 \u0645\u0646 \u0627\u0644\u0641\u0631\u0639. \u0627\u0644\u0637\u0644\u0628\u0627\u062a: ${orderSerials} - \u0627\u062a\u062c\u0627\u0647 ${driver.current_direction}.`);
         }
         lastDriverAssignedTripRef.current = assignedTripKey;
       }
@@ -153,6 +260,10 @@ export default function App() {
   // Poll for updates every 3 seconds (only when logged in)
   useEffect(() => {
     if (!token) return;
+    if (localStorage.getItem('user_role') === 'deliveryman') {
+      requestAlarmPermission();
+      registerDeliverymanPush();
+    }
 
     fetchGlobalData(true);
     const interval = setInterval(() => {
@@ -170,6 +281,10 @@ export default function App() {
     if (newRole === 'staff') setActiveTab('staff');
     else if (newRole === 'manager') setActiveTab('manager');
     else if (newRole === 'deliveryman') setActiveTab('deliveryman-view');
+    if (newRole === 'deliveryman') {
+      requestAlarmPermission();
+      registerDeliverymanPush();
+    }
     addToast(`Welcome, ${newUsername}! Logged in as ${newRole}.`, 'success');
   };
 

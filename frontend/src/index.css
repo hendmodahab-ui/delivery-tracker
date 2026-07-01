@@ -302,6 +302,10 @@ select:focus {
   gap: 0.75rem;
 }
 
+.direction-drop-target {
+  border-color: rgba(99, 102, 241, 0.35);
+}
+
 .direction-header {
   font-size: 1rem;
   font-weight: 700;
@@ -329,6 +333,20 @@ select:focus {
   flex-direction: column;
   gap: 0.35rem;
   transition: var(--transition-smooth);
+}
+
+.order-item-card[draggable="true"] {
+  cursor: grab;
+}
+
+.order-item-card[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+.compact-select {
+  font-size: 0.78rem;
+  padding: 0.35rem 0.45rem;
+  width: 100%;
 }
 
 /* Waiting Highlights */
@@ -917,6 +935,52 @@ tr:hover td {
   grid-template-columns: auto 1fr auto;
   min-height: 42px;
   padding: 0.55rem 0.65rem;
+}
+
+.staff-queue-row[draggable="true"] {
+  cursor: grab;
+}
+
+.staff-queue-row[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+.queue-actions {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.35rem;
+  justify-content: flex-end;
+}
+
+.queue-icon-btn {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-main);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 0.8rem;
+  font-weight: 800;
+  height: 1.7rem;
+  justify-content: center;
+  width: 1.7rem;
+}
+
+.queue-icon-btn:disabled {
+  color: rgba(255, 255, 255, 0.22);
+  cursor: not-allowed;
+}
+
+.extra-orders-control {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: 1fr auto;
+  margin-top: 0.25rem;
+}
+
+.extra-orders-control input {
+  min-width: 0;
 }
 
 .staff-queue-row.current-turn {

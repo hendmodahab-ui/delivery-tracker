@@ -275,7 +275,7 @@ export default function ManagerDashboard({ deliverymen, settings, addToast }) {
                 <span className="kpi-value" style={{ color: summary?.orders_waited_more_than_10_minutes > 0 ? 'var(--color-danger)' : 'inherit' }}>
                   {summary?.orders_waited_more_than_10_minutes || 0}
                 </span>
-                <span className="kpi-label">Waited &gt; {settings?.max_waiting_minutes || 10}m</span>
+                <span className="kpi-label">Waited &gt; {settings?.max_waiting_minutes || 13}m</span>
               </div>
               <div className="kpi-card">
                 <span className="kpi-value">{summary?.average_delivery_duration_overall ? `${summary.average_delivery_duration_overall}m` : '0m'}</span>
