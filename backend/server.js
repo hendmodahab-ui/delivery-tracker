@@ -1114,7 +1114,7 @@ app.get('/api/manager/export', requireRole('manager'), async (req, res) => {
              COALESCE(ROUND(AVG(CASE WHEN t.status = 'completed' THEN t.duration_minutes END), 2), 0) as average_trip_duration
       FROM deliverymen dm
       LEFT JOIN trips t ON t.deliveryman_id = dm.id
-      GROUP BY dm.id
+      GROUP BY dm.id, dm.name, dm.status
       ORDER BY dm.name
     `);
 
