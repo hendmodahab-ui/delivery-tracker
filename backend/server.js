@@ -837,14 +837,14 @@ app.get('/api/manager/trips', requireRole('manager'), async (req, res) => {
     const nowStr = new Date().toISOString();
 
     const trips = await db.all(`
-      SELECT t.*, dm.name as deliveryman_name, COALESCE(oc.orders_count, 0) as orders_count
+      SELECT t.*, dm.name as deliveryman_name, COALESCE(toj.orders_count, 0) as orders_count
       FROM trips t
       LEFT JOIN deliverymen dm ON t.deliveryman_id = dm.id
       LEFT JOIN (
         SELECT trip_id, COUNT(order_id) as orders_count
         FROM trip_orders
         GROUP BY trip_id
-      ) oc ON oc.trip_id = t.id
+      ) toj ON toj.trip_id = t.id
       ORDER BY t.assigned_at DESC
     `);
 
@@ -1058,14 +1058,14 @@ app.get('/api/manager/export', requireRole('manager'), async (req, res) => {
     `), filters, 'entered_at', 'deliveryman_id', 'direction');
 
     const trips = filterItems(await db.all(`
-      SELECT t.*, dm.name as deliveryman_name, COALESCE(oc.orders_count, 0) as orders_count
+      SELECT t.*, dm.name as deliveryman_name, COALESCE(toj.orders_count, 0) as orders_count
       FROM trips t
       LEFT JOIN deliverymen dm ON t.deliveryman_id = dm.id
       LEFT JOIN (
         SELECT trip_id, COUNT(order_id) as orders_count
         FROM trip_orders
         GROUP BY trip_id
-      ) oc ON oc.trip_id = t.id
+      ) toj ON toj.trip_id = t.id
       ORDER BY t.assigned_at DESC
     `), filters, 'assigned_at', 'deliveryman_id', 'direction');
     const exportTrips = trips.map(trip => {
@@ -1114,7 +1114,7 @@ app.get('/api/manager/export', requireRole('manager'), async (req, res) => {
              COALESCE(ROUND(AVG(CASE WHEN t.status = 'completed' THEN t.duration_minutes END), 2), 0) as average_trip_duration
       FROM deliverymen dm
       LEFT JOIN trips t ON t.deliveryman_id = dm.id
-      GROUP BY dm.id, dm.name, dm.status
+      GROUP BY dm.id
       ORDER BY dm.name
     `);
 
